@@ -4,6 +4,7 @@
 用法: python main.py input.html [output.md]
       不给参数时从 stdin 读、向 stdout 写。
 """
+import re
 import sys
 from bs4 import BeautifulSoup, NavigableString, Tag
 
@@ -30,6 +31,14 @@ def clean(text: str) -> str:
     core = " ".join(text.split())
     return lead + core + trail if core else (lead or trail)
 
+def render_inline_str(c) -> str:
+    """渲染单个行内子节点(文本或标签)."""
+    if isinstance(c, NavigableString):
+        return clean(str(c))
+    if not isinstance(c, Tag):
+        return ""
+    return render_inline(c)
+
 def render_inline(node: Tag) -> str:
     out = []
     for c in node.children:
@@ -48,16 +57,18 @@ def render_inline(node: Tag) -> str:
         elif c.name == "code":
             out.append("`%s`" % c.get_text())
         elif c.name == "a":
-            out.append("[%s](%s)" % (render_inline(c), c.get("href", "")))
+            title = ' "%s"' % c["title"] if c.get("title") else ""
+            out.append("[%s](%s%s)" % (render_inline(c), c.get("href", ""), title))
         elif c.name == "img":
-            out.append("![%s](%s)" % (c.get("alt", ""), c.get("src", "")))
+            title = ' "%s"' % c["title"] if c.get("title") else ""
+            out.append("![%s](%s%s)" % (c.get("alt", ""), c.get("src", ""), title))
         elif c.name == "br":
             out.append("\n")
         elif c.name in BLOCK_TAGS:
             out.append("\n\n%s\n\n" % render_block(c))
         else:  # span 等纯容器
             out.append(render_inline(c))
-    return "".join(out)
+    return re.sub("\n[ \t]+", "\n", "".join(out))  # <br> 后不吃前导空格
 
 
 def render_code(pre: Tag) -> str:
@@ -78,32 +89,47 @@ def render_list(node: Tag, ordered: bool, indent: str = "") -> str:
     lines = []
     for i, li in enumerate(node.find_all("li", recursive=False), 1):
         marker = "%d. " % i if ordered else "- "
-        sub = []
-        inline_parts = []
+        pad = indent + " " * len(marker)
+        head, sub, head_open = [], [], True
         for c in li.children:
             if isinstance(c, Tag) and c.name in BLOCK_TAGS:
-                sub.append(render_block(c, indent + " " * len(marker)))
-            else:
-                inline_parts.append(c)
-        wrapper = li  # 借用 li 节点渲染行内部分
-        for c in list(li.children):
-            if isinstance(c, Tag) and c.name in BLOCK_TAGS:
-                c.extract()
-        text = render_inline(wrapper).strip()
+                # 首个 <p>(loose list) 内容并入标记行，其余块缩进为子块
+                if head_open and c.name == "p":
+                    head.append(render_inline(c))
+                    head_open = False
+                else:
+                    sub.append(render_block(c, pad))
+            elif str(c).strip() or isinstance(c, Tag):
+                head.append(render_inline_str(c))
+        text = "".join(head).strip()
         lines.append(indent + marker + text)
-        lines.extend(sub)
+        lines.extend(b for b in sub if b.strip())
     return "\n".join(lines)
 
 
 def render_table(node: Tag) -> str:
     rows = []
+    header = None
     for tr in node.find_all("tr"):
-        cells = [clean(render_inline(c)).strip() or " "
-                 for c in tr.find_all(("th", "td"), recursive=False)]
-        rows.append("| " + " | ".join(cells) + " |")
-    if len(rows) >= 2:
-        rows.insert(1, "|" + "---|" * (rows[0].count("|") - 1))
+        cells = tr.find_all(("th", "td"), recursive=False)
+        rendered = [clean(render_inline(c)).strip() or " " for c in cells]
+        rows.append("| " + " | ".join(rendered) + " |")
+        if header is None and tr.find("th") is not None:
+            header = [align_of(c) for c in cells]
+    if header and len(rows) >= 2:
+        rows.insert(1, "|" + "|".join(header) + "|")
     return "\n".join(rows)
+
+
+def align_of(cell: Tag) -> str:
+    style = (cell.get("style") or "").replace(" ", "")
+    if "text-align:center" in style:
+        return ":---:"
+    if "text-align:right" in style:
+        return "---:"
+    if "text-align:left" in style:
+        return ":---"
+    return "---"
 
 
 def render_block(node: Tag, indent: str = "") -> str:
@@ -135,7 +161,8 @@ def render_block(node: Tag, indent: str = "") -> str:
     if buf:
         parts.append(render_inline_buf(buf))
     parts = [p.strip() for p in parts if p.strip()]
-    return ("\n\n".join(parts)).replace("\n", "\n" + indent)
+    joined = "\n\n".join(parts)
+    return "\n".join(indent + l if l else l for l in joined.split("\n"))
 
 
 def render_inline_buf(children) -> str:
