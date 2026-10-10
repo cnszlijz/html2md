@@ -187,7 +187,7 @@ def render_blocks(node: Tag) -> str:
 
 
 def html2md(html: str) -> str:
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html, "lxml")
     for tag in soup(["script", "style"]):
         tag.decompose()
     preprocess(soup)
