@@ -191,7 +191,12 @@ def html2md(html: str) -> str:
     for tag in soup(["script", "style"]):
         tag.decompose()
     preprocess(soup)
-    root = soup.body if soup.body is not None else soup
+    # 整页 HTML 时只取题目描述片段，否则处理全部内容
+    frag = soup.select_one('[data-fragment-id="problem-description"]')
+    if frag is not None:
+        root = frag
+    else:
+        root = soup.body if soup.body is not None else soup
     return render_blocks(root) + "\n"
 
 

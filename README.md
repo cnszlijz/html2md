@@ -25,6 +25,11 @@ from main import html2md
 md = html2md(open("problem.html", encoding="utf-8").read())
 ```
 
+### 输入范围
+
+输入若存在 `<div data-fragment-id="problem-description">`（OJ 整页导出的 HTML），
+则只转换该片段内部内容；否则转换整个输入（如直接复制的题面 HTML 片段）。
+
 ## 还原规则
 
 | HTML | Markdown |
